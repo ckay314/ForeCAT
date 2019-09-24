@@ -1,7 +1,7 @@
 import numpy as np
 import math
 import ForeCAT_functions as FC
-import GPU_functions as GF
+import CPU_functions as GF
 
 global dtor, radeg
 dtor  = 0.0174532925   # degrees to radians
@@ -66,6 +66,10 @@ class CME:
 		self.points = [[]]*Npoints
 		for i in range(Npoints):			# points.[i][0,:] = xyz
 			self.points[i] = np.zeros([2, 3])	# points.[i][1,:] = SPH (R, lat, lon)
+		# convenient for serial version to have r/lat/lon in arrays
+		self.rs = np.zeros(Npoints)
+		self.lats = np.zeros(Npoints)
+		self.lons = np.zeros(Npoints)
 		# position of the center of the CME cone (center of toroidal axis) 
 		self.cone = np.zeros([2,3])
 		self.cone[1,:] = [params[2] - self.shape[0] - self.shape[1], pos[0], pos[1]]
@@ -76,7 +80,6 @@ class CME:
 		self.tilt = pos[2]  
 		# calculate initial position of grid points
 		self.calc_points()
-
 
 		# Forces at each point
 		self.defforces = [[]]*Npoints
@@ -141,8 +144,9 @@ class CME:
 		# points numbering  (top)  0  3  6  9   12   (bot)
 		#  toroidal --->	   1  4  7  10  13    --> 7 is nose
 		#	axis		   2  5  8  11  14
+		# choice between CPU and GPU!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 		GF.calc_pos(self)  # done on GPU now
-
+		GF.calc_posCPU(self)
 		# Update the unit vector giving radial direction
  		colat = (90. - self.cone[1,1]) * dtor
 		lon   = self.cone[1,2] * dtor
@@ -223,8 +227,13 @@ class CME:
 
 		# Calculate the drag acting on the CME
 		self.Fdrag = FC.calc_drag(self)
-		# Calculate the deflection forces on the CME
+		# Calculate the deflection forces on the CME  
+		# GPU or CPU options!!!!
 		GF.calc_forces(self)
+		#print self.defforces[0]
+		GF.calc_forcesCPU(self)
+
+
 		# convert forces to accelerations
 		self.get_center_acc()
 

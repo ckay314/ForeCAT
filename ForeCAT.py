@@ -7,7 +7,7 @@ import os
 sys.path.append(os.path.abspath('/home/cdkay/ForeCAT'))
 import ForeCAT_functions as FC
 import CME_class as CC
-import GPU_functions as GF
+import CPU_functions as GF
 
 #---------------------------------------------------------------------------------------|
 # Read in the filename from the command line and load the parameters -(No Touching!)----|
@@ -41,6 +41,8 @@ CME_params, ipos, rmax, tprint, Ntor, Npol = FC.read_in_params(fname)
 rsun    = 7e10   # stellar radius [cm]
 rotrate = 2.8e-6 # rotation rate  [s^-1]
 Rss     = 2.5    # source surface radius [Rsun]
+
+FC.set_star_params(rsun, rotrate)
 
 # Radial Velocity ----------------------------------------------------------------------|
 # This can be any function user_vr that takes the CME nose distance (in Rsun)
@@ -80,12 +82,12 @@ def user_exp(R_nose):
 # This can be any function user_mass that takes the CME nose distance (in Rsun)
 # as input and returns the mass in g
 
-init_M = .3e15 #[g]
+max_M = 3e15 #[g]
+rmaxM = 10 # rsun
 # Constant mass
 def user_mass(R_nose):
-	M = init_M
-	return M
-
+	M = max_M / 2. * (1 + (R_nose-CME_params[2])/(rmaxM - CME_params[2]))
+	return np.min([M, max_M])
 #---------------------------------------------------------------------------------------|
 #---------------------------------------------------------------------------------------|
 #---------------------------------------------------------------------------------------|
@@ -107,6 +109,7 @@ def user_mass(R_nose):
 
 # Initialize GPU arrays and load magnetic field data
 GF.init_GPU(FC.CR, Ntor, Npol, rsun, Rss)
+GF.init_CPU(FC.CR, Ntor, Npol, rsun, Rss)
 
 # Initialize CME
 CME = CC.CME(ipos, CME_params, Ntor, Npol, user_vr, user_exp, user_mass, rsun)
@@ -134,6 +137,7 @@ while CME.points[CC.idcent][1,0] <= rmax:
 	if dtprint > tprint:          # if not printing every time step, this 
 		FC.print_status(CME)  # determines when to print and resets
 		dtprint = 0. 	      # the counter
+	print potato
 
 FC.print_status(CME) # print final position
 FC.close_files()     # close the output files
