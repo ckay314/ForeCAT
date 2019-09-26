@@ -298,13 +298,15 @@ mod = SourceModule("""
 		int j;
 		// this is making them overwrite each other - > 6 * (myid+1) not 7*
 		//for (j = 6*myid; j<6*(myid+1); j++){outs[j] = 0;};
-		outs[6*myid]   = Bmag;
+		// should be FPgrad and Ftens but convenient to use to pass output from GPU
+		outs[6*myid]   = FPgrad[0];
 		outs[6*myid+1]   = FPgrad[1];
 		outs[6*myid+2]   = FPgrad[2];
 		outs[6*myid+3]   = Ftens[0];
 		outs[6*myid+4]   = Ftens[1];
-		outs[6*myid+5]   = Ftens[2];
+		outs[6*myid+5]   = Ftens[2]; 
 		}
+
 
     __global__ void calc_torque_GPU(float *SPHpos, float *XYZpos, float *tangs, float *pangs, float *shape, float * RLLT, float *forces_gpu, float *tottor_in)
 		{
@@ -488,7 +490,7 @@ def init_CPU(CR, Ntor, Npol, rsun_in, RSS_in):
 	#t_angs = np.array([delta_maj * (int(Ntor / 2) - int(i/Npol)) for i in range(Npoints)], dtype=np.float32)
 	#p_angs = np.array([ delta_min * (i - int(Npol / 2)) for i in range(Npol)] * Ntor, dtype=np.float32)
 
-	global B_low, B_high
+	global B_low, B_high, B_mid
 	# load the pickles which hold the mag field data
 	f1 = open('/home/cdkay/MagnetoPickles/CR'+str(FC.CR)+'a.pkl', 'rb')
 	#print "loading low pickle ..."
@@ -500,7 +502,9 @@ def init_CPU(CR, Ntor, Npol, rsun_in, RSS_in):
 	f1.close() 
 
 	# make B mid here?
-
+	B_mid = np.zeros([80,361,720,4])
+	B_mid[:35,:,:,:] = B_low[40:-1, :, :,:]
+	B_mid[35:,:,:,:] = B_high[:45,:,:,:]
 	# flag for in low/high pickle
 	Bzone = 0
 
@@ -576,7 +580,6 @@ def calc_forces(CME):
 
 	# get forces from GPU 
 	forces =  forces_gpu.get()
-	print 'from GPU', forces[0:6]
 	# clean out NaNs that randomly show up at a few points on occasion (weird angle I'm guessing)
 	forces[np.where(np.isnan(forces) == True)] = 0.
 	for i in range(CC.Npoints):
@@ -590,23 +593,139 @@ def calc_forcesCPU(CME):
 	cc = np.cos((90.-CME.lats)*dtor)
 	sl = np.sin(CME.lons*dtor)
 	cl = np.cos(CME.lons*dtor)
+	scangs = [sc,cc,sl,cl]
 	# unit vec in radial direction
-	rhat = [sc*cl, sc*sl, cc]
+	rhat = np.transpose(np.array([sc*cl, sc*sl, cc]))
 	
-	# calculate mag field at points AKA the reall fun part
-	getBCPU(CME.rs, CME.lats, CME.lons)
-
-
-def getBCPU(R, lat, lon):
-	# doing all vec at once? is wise?
-
+	# calculate mag field at CME points 
+	BCME = getBCPU(CME.rs, CME.lats, CME.lons,scangs)
+	Bhat = BCME[:,:3]/(BCME[:,3].reshape([-1,1]))
 	
+	# calculate mag field at adjacent points for gradients
+	# really only need magnitude...
+	Blat1 = getBCPU(CME.rs, CME.lats+0.5, CME.lons,scangs)
+	Blat2 = getBCPU(CME.rs, CME.lats-0.5, CME.lons,scangs)
+	dB2dlat = (Blat1[:,3]**2 - Blat2[:,3]**2)/2./(0.5*dtor*RsR*7e10*CME.rs)
+	Blon1 = getBCPU(CME.rs, CME.lats, CME.lons+0.5,scangs)
+	Blon2 = getBCPU(CME.rs, CME.lats, CME.lons-0.5,scangs)
+	dB2dlon = (Blon1[:,3]**2 - Blon2[:,3]**2)/2./(0.5*dtor*RsR*7e10*CME.rs*sc)
+	dB2 = np.transpose(np.array([cc*cl*dB2dlat + sl*dB2dlon, cc*sl*dB2dlat - cl*dB2dlon, -sc*dB2dlat]))
+	
+	# calculate tension force----------------------------------------
+	sp = np.sin(CME.p_angs)
+	cp = np.cos(CME.p_angs)
+	st = np.sin(CME.t_angs)
+	ct = np.cos(CME.t_angs)
+
+	# for convenience make short shape names
+	a, b, c = CME.shape[0], CME.shape[1], CME.shape[2]
+
+	# toroidal tangent vector
+	xt = np.transpose(np.array([-(a + b*cp)*st, 0*sp, (c+b*cp)*ct]))
+	xtmag = np.sqrt(xt[:,0]**2 + xt[:,1]**2 + xt[:,2]**2)
+	tgt_t = xt / xtmag.reshape([-1,1])
+
+	# poloidal tangent vector
+	xp = np.transpose(np.array([-b*sp*ct, b*cp, -b*sp*st]))
+	xpmag = np.sqrt(xp[:,0]**2 + xp[:,1]**2 + xp[:,2]**2)
+	tgt_p = xp / xpmag.reshape([-1,1])
+
+	# normal vector = cross product
+	norm = np.cross(tgt_p,tgt_t)
+
+	# calculate second derivatives
+	xpp = np.transpose(np.array([-b*cp*ct, -b*sp, -b*cp*st]))
+	xtt = np.transpose(np.array([-(a + b*cp)*ct, 0*sp, -(c+b*cp)*st]))
+	xpt = np.transpose(np.array([b*sp*st, 0*sp,-b*sp*ct]))
+	
+	# coefficients of the first fundamental form
+	E1FF = xp[:,0]**2 + xp[:,1]**2 + xp[:,2]**2
+	F1FF = xp[:,0]*xt[:,0] + xp[:,1]*xt[:,1] + xp[:,2]*xt[:,2]
+	G1FF = xt[:,0]**2 + xt[:,1]**2 + xt[:,2]**2
+
+	# coefficients of second fundamental form
+	e2FF = norm[:,0] * xpp[:,0] + norm[:,1] * xpp[:,1] + norm[:,2] * xpp[:,2]	
+	f2FF = norm[:,0] * xpt[:,0] + norm[:,1] * xpt[:,1] + norm[:,2] * xpt[:,2]	
+	g2FF = norm[:,0] * xtt[:,0] + norm[:,1] * xtt[:,1] + norm[:,2] * xtt[:,2]	
+
+	# rotate vectors to sun frame
+	tempvec = [tgt_t[:,0], tgt_t[:,1], tgt_t[:,2]]
+	tempvec = FC.rotx(tempvec,-CME.tilt)
+	tempvec = FC.roty(tempvec,-CME.cone[1,1])
+	tempvec = FC.rotz(tempvec, CME.cone[1,2])
+	tgt_t = np.transpose(np.array(tempvec))
+	tempvec = [tgt_p[:,0], tgt_p[:,1], tgt_p[:,2]]
+	tempvec = FC.rotx(tempvec,-CME.tilt)
+	tempvec = FC.roty(tempvec,-CME.cone[1,1])
+	tempvec = FC.rotz(tempvec, CME.cone[1,2])
+	tgt_p = np.transpose(np.array(tempvec))
+	tempvec = [norm[:,0], norm[:,1], norm[:,2]]
+	tempvec = FC.rotx(tempvec,-CME.tilt)
+	tempvec = FC.roty(tempvec,-CME.cone[1,1])
+	tempvec = FC.rotz(tempvec, CME.cone[1,2])
+	norm = np.transpose(np.array(tempvec))
+
+	# solar B in pol/tor components
+	Bt_u = Bhat[:,0] * tgt_t[:,0] + Bhat[:,1] * tgt_t[:,1] + Bhat[:,2] * tgt_t[:,2]	
+	Bp_u = Bhat[:,0] * tgt_p[:,0] + Bhat[:,1] * tgt_p[:,1] + Bhat[:,2] * tgt_p[:,2]	
+
+	# unit tangent vec for projected direction of draping on surface
+	DD = np.transpose(np.array([np.sign(Bp_u) * np.sqrt(1-Bt_u**2), Bt_u]))
+
+	# determine geodesic curvature and tension force
+	k = (e2FF*DD[:,0]**2 + f2FF*DD[:,0]*DD[:,1] + g2FF*DD[:,1]**2) / (E1FF*DD[:,0]**2 + F1FF*DD[:,0]*DD[:,1] + G1FF*DD[:,1]**2)
+	Ft_mag = np.abs(k) * BCME[:,3]**2 / 4. / 3.14159 / (RsR*7e10)
+
+	# remove radial component
+	ndr = norm[:,0]*rhat[:,0] + norm[:,1]*rhat[:,1] + norm[:,2]*rhat[:,2]
+	n_nr = np.transpose(np.array([norm[:,0] -ndr*rhat[:,0], norm[:,1] -ndr*rhat[:,1], norm[:,2] -ndr*rhat[:,2]])) 
+	Ftens = np.transpose(np.array([-Ft_mag * n_nr[:,0],-Ft_mag * n_nr[:,1],-Ft_mag * n_nr[:,2]])) 
+
+	# determine mag pressure force
+	# first remove component of pressure gradients parallel to draped B
+	drBhat = np.transpose(np.array([DD[:,0]*tgt_p[:,0] + DD[:,1]*tgt_t[:,0], DD[:,0]*tgt_p[:,1] + DD[:,1]*tgt_t[:,1], DD[:,0]*tgt_p[:,2] + DD[:,1]*tgt_t[:,2]]))
+	dB2parmag = dB2[:,0]*drBhat[:,0] + dB2[:,1]*drBhat[:,1] + dB2[:,2]*drBhat[:,2]
+	dB2perp = np.transpose(np.array([dB2[:,0] - dB2parmag*drBhat[:,0], dB2[:,1] - dB2parmag*drBhat[:,1], dB2[:,2] - dB2parmag*drBhat[:,2]])) 
+	Fpgrad = dB2perp/8/3.14159
+	
+	# clean out any NaNs
+	Ftens[np.where(np.isnan(Ftens) == True)] = 0
+	Fpgrad[np.where(np.isnan(Fpgrad) == True)] = 0
+	
+	# put in CME object
+	for i in range(CC.Npoints):
+		CME.defforces[i][0,:] = Ftens[i,:]
+		CME.defforces[i][1,:] = Fpgrad[i,:]
+
+
+def getBCPU(R, lat, lon, scangs):
 	# relvant globals FC.SW_v, FC.rotrate, RsR, RSS
+	# doing all vec at once? is wise?
+	#R +=215.# for testing!!!!
+	# check if over source surface
+	aboveSS = np.where(R >= RSS)
+	scale = R/RSS
+	scale[np.where(scale < 1)] = 1.
+	R[aboveSS] = R[aboveSS]*0 + RSS
+	#if len(aboveSS[0]) == len(R):
+		
 	Rids = (R-1.)/dR
 	Rids = Rids.astype(int)
-	# if Rids < 75 then in low pickle, else < 150 in high pickle, else above source surface
-	lowIDs  = np.where(Rids<75)
-	highIDs = np.where((Rids>74) & (Rids<150))
+
+	bottomR = 1.0
+	# determine whether in low/mid/high pickle
+	#minRids = np.min(Rids)
+	maxRids = np.max(Rids)
+	if maxRids < 75:
+		theChosenPickle = B_low
+	elif maxRids < 110:
+		theChosenPickle = B_mid
+		Rids -= 40 # reindex ids
+		bottomR = 1.4
+	else:
+		theChosenPickle = B_high
+		Rids -= 75
+		bottomR = 1.75
 	ssIDs   = np.where(Rids >=150)
 	latIDs = lat*2 + 179
 	latIDs = latIDs.astype(int)
@@ -615,14 +734,16 @@ def getBCPU(R, lat, lon):
 	
 	# determine the B at the 8 adjacent points
 	# assuming B low for now!!!!!
-	B1 = B_low[Rids, latIDs+1, lonIDs,:]
-	B2 = B_low[Rids, latIDs+1, (lonIDs+1)%720,:]
-	B3 = B_low[Rids, latIDs, lonIDs,:]
-	B4 = B_low[Rids, latIDs, (lonIDs+1)%720,:]
-	B5 = B_low[Rids+1, latIDs+1, lonIDs,:]
-	B6 = B_low[Rids+1, latIDs+1, (lonIDs+1)%720,:]
-	B7 = B_low[Rids+1, latIDs, lonIDs,:]
-	B8 = B_low[Rids+1, latIDs, (lonIDs+1)%720,:]
+	B1 = theChosenPickle[Rids, latIDs+1, lonIDs,:]
+	B2 = theChosenPickle[Rids, latIDs+1, (lonIDs+1)%720,:]
+	B3 = theChosenPickle[Rids, latIDs, lonIDs,:]
+	B4 = theChosenPickle[Rids, latIDs, (lonIDs+1)%720,:]
+	upRids = Rids+1
+	upRids[aboveSS] = -1
+	B5 = theChosenPickle[upRids, latIDs+1, lonIDs,:]
+	B6 = theChosenPickle[upRids, latIDs+1, (lonIDs+1)%720,:]
+	B7 = theChosenPickle[upRids, latIDs, lonIDs,:]
+	B8 = theChosenPickle[upRids, latIDs, (lonIDs+1)%720,:]
 
 	# determine weighting of interpolation points
 	flat = lat*2 - latIDs + 179
@@ -631,33 +752,44 @@ def getBCPU(R, lat, lon):
 	som = np.sin(om)	
 
 	# lon slerps
-	Npoints = len(flat)
-	sflon1 = np.zeros([Npoints, 4])
-	sflon2 = np.zeros([Npoints, 4])
-	for i in range(4):
-		sflon1[:,i] = np.sin((1.-flon)*om) 
-		sflon2[:,i] = np.sin(flon*om)
+	sflon1 = np.sin((1.-flon)*om).reshape([-1,1]) 
+	sflon2 = np.sin(flon*om).reshape([-1,1]) 
 	Ba = (B1 * sflon1 + B2 * sflon2) / som
 	Bb = (B3 * sflon1 + B4 * sflon2) / som
 	Bc = (B5 * sflon1 + B6 * sflon2) / som
 	Bd = (B7 * sflon1 + B8 * sflon2) / som
 
 	# lat slerps
-	sflat1 = np.zeros([Npoints, 4])
-	sflat2 = np.zeros([Npoints, 4])
-	for i in range(4):
-		sflat1[:,i] = np.sin((1.-flat)*om) 
-		sflat2[:,i] = np.sin(flat*om)
+	sflat1 = np.sin((1.-flat)*om).reshape([-1,1])  
+	sflat2 = np.sin(flat*om).reshape([-1,1]) 
 	Baa = (Bb * sflat1 + Ba * sflat2) / som
 	Bbb = (Bd * sflat1 + Bc * sflat2) / som
 	
 	# radial linterp
-	fR = ((R-1.)/dR - Rids)
-	fR1 = np.zeros([Npoints,4])
-	for i in range(4):
-		fR1[:,i] = fR
-	Bmag = (1-fR1) * Baa + fR1*Bbb
-	return Bmag
+	fR = ((R-bottomR)/dR - Rids).reshape([-1,1]) 
+	Bmag = (1-fR) * Baa + fR*Bbb
+	
+	# unpack the array to [#,#] instead of [#][#]
+	Bmag = Bmag.reshape([len(Bmag),4])
+	
+	# scale if over SS height
+	Bmag *= (1./(scale.reshape([-1,1])**2))
+
+	# adjust to Parker spiral angle above SS
+	# passing scangs = [sc,cc,sl,cl]
+	if maxRids == 150:
+		Br = Bmag[:,3]
+		#FC.SW_v = 400.e5 # for testing!!!!
+		Bphi = -Br * (R*scale-RSS) * RsR * 7e10 * FC.rotrate * scangs[0] / FC.SW_v
+		BmagPS = np.sqrt(Br**2 + Bphi**2)
+		Bx = scangs[0] * scangs[3] * Br - scangs[2] * Bphi
+		By = scangs[0] * scangs[2] * Br + scangs[3] * Bphi
+		Bz = scangs[1] * Br
+		Bmag[aboveSS,0] = Bx[aboveSS]
+		Bmag[aboveSS,1] = By[aboveSS]
+		Bmag[aboveSS,2] = Bz[aboveSS]
+		Bmag[aboveSS,3] = BmagPS[aboveSS]
+	return Bmag 
 
 
 	# FORCES CURRENTLY SET TO OUTPUT B IN SPOT 0

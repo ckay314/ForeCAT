@@ -146,7 +146,7 @@ class CME:
 		#	axis		   2  5  8  11  14
 		# choice between CPU and GPU!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 		GF.calc_pos(self)  # done on GPU now
-		GF.calc_posCPU(self)
+		#GF.calc_posCPU(self)
 		# Update the unit vector giving radial direction
  		colat = (90. - self.cone[1,1]) * dtor
 		lon   = self.cone[1,2] * dtor
@@ -230,10 +230,8 @@ class CME:
 		# Calculate the deflection forces on the CME  
 		# GPU or CPU options!!!!
 		GF.calc_forces(self)
-		#print self.defforces[0]
-		GF.calc_forcesCPU(self)
-
-
+		#GF.calc_forcesCPU(self)
+		
 		# convert forces to accelerations
 		self.get_center_acc()
 
