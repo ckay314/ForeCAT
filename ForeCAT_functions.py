@@ -74,7 +74,10 @@ def read_in_params(file):
 		useGPU = True
 	else:
 		useGPU = False
-
+        
+	global picklejar 
+	picklejar = '/Users/ckay/PickleJar/'
+    
 	return CME_params, init_pos, rmax, tprint, Ntor, Npol
 
 
@@ -85,7 +88,7 @@ def initdefpickle(CR):
 	# get pickle name
 	fname = 'CR' + str(CR) 
 	# distance pickle [inCH, fromHCS, fromCH, fromPS(calc later maybe)]
-	f1 = open('/home/cdkay/MagnetoPickles/'+fname+'_dists.pkl', 'rb')
+	f1 = open(picklejar+fname+'_dists.pkl', 'rb')
 
 	#print "loading distance pickle ..."
 	dists = pickle.load(f1)

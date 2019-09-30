@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import sys
 import os
 # give it the path wherever the ForeCAT files are stored
-sys.path.append(os.path.abspath('/home/cdkay/ForeCAT'))
+sys.path.append(os.path.abspath('/Users/ckay/OSPREI/ForeCAT'))
 import ForeCAT_functions as FC
 import CME_class as CC
 import ForceFields as FF
