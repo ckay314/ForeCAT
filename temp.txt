@@ -1,0 +1,15 @@
+rmax: 		10.0
+tprint:		1.
+ilat:		16.5
+ilon:		216.8
+tilt:    	-35.
+CR:		2029
+Cd:		1.
+rotCME:	        1
+Ntor:		15
+Npol:		13
+L0:		0.
+shapeA:		1.
+shapeB:		0.2
+rstart:	        1.1
+useGPU:		0
