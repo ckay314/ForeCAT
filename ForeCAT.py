@@ -7,7 +7,7 @@ import os
 sys.path.append(os.path.abspath('/home/cdkay/ForeCAT'))
 import ForeCAT_functions as FC
 import CME_class as CC
-import CPU_functions as GF
+import ForceFields as FF
 
 #---------------------------------------------------------------------------------------|
 # Read in the filename from the command line and load the parameters -(No Touching!)----|
@@ -21,6 +21,8 @@ fprefix = fname[:-4]
 
 # Get CME parameters
 CME_params, ipos, rmax, tprint, Ntor, Npol = FC.read_in_params(fname)
+print 'Use GPU', FC.useGPU
+
 
 #---------------------------------------------------------------------------------------|
 #---------------------------------------------------------------------------------------|
@@ -108,8 +110,10 @@ def user_mass(R_nose):
 #---------------------------------------------------------------------------------------|
 
 # Initialize GPU arrays and load magnetic field data
-GF.init_GPU(FC.CR, Ntor, Npol, rsun, Rss)
-GF.init_CPU(FC.CR, Ntor, Npol, rsun, Rss)
+if FC.useGPU:
+	FF.init_GPU(FC.CR, Ntor, Npol, rsun, Rss)
+else:
+	FF.init_CPU(FC.CR, Ntor, Npol, rsun, Rss)
 
 # Initialize CME
 CME = CC.CME(ipos, CME_params, Ntor, Npol, user_vr, user_exp, user_mass, rsun)
@@ -134,14 +138,12 @@ while CME.points[CC.idcent][1,0] <= rmax:
 	#CME.calc_forces()
 	CME.update_CME(user_vr, user_exp, user_mass)
 	dtprint += CME.dt
-	if dtprint > tprint:          # if not printing every time step, this 
+	if (dtprint > tprint):          # if not printing every time step, this 
 		FC.print_status(CME)  # determines when to print and resets
 		dtprint = 0. 	      # the counter
-	print potato
-
 FC.print_status(CME) # print final position
 FC.close_files()     # close the output files
-GF.clear_GPU()	     # reset GPU 
+if FC.useGPU: FF.clear_GPU() # reset GPU if needed
 #---------------------------------------------------------------------------------------|
 #---------------------------------------------------------------------------------------|
 #---------------------------------------------------------------------------------------|

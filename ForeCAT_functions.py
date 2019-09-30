@@ -18,17 +18,18 @@ dtor  = 0.0174532925  # degrees to radians
 radeg = 57.29577951    # radians to degrees
 kmRs  = 1.0e5 / rsun # km (/s) divided by rsun (in cm)
 
-def read_in_params(file):
+def set_star_params(rsun_in, rotrate_in):
+	rsun = rsun_in
+	rotrate = rotrate_in
 
-# get rid of ins and use a checker that pulls var names from a dictionary!!!!!!!!!!!!
-	
+def read_in_params(file):
 
 	#read in the parameters from a text file
 	a = np.genfromtxt(file, dtype=None)
 	ins = []
 	myvar_names = []
 	myvar_vals  = []
-	needed_vars = ['ilat', 'ilon', 'tilt', 'CR', 'Cd', 'rstart', 'shapeA', 'shapeB', 'tprint', 'rmax', 'rotCME', 'Ntor', 'Npol', 'L0']
+	needed_vars = ['ilat', 'ilon', 'tilt', 'CR', 'Cd', 'rstart', 'shapeA', 'shapeB', 'tprint', 'rmax', 'rotCME', 'Ntor', 'Npol', 'L0', 'useGPU']
 	ordered_var_vals = np.zeros(len(needed_vars))
 	for i in range(len(a)):
 		temp = a[i]
@@ -68,6 +69,11 @@ def read_in_params(file):
 	Ntor = int(ordered_var_vals[11])
 	Npol = int(ordered_var_vals[12])
 	lon0 = ordered_var_vals[13]
+	global useGPU
+	if ordered_var_vals[14] == 1:
+		useGPU = True
+	else:
+		useGPU = False
 
 	return CME_params, init_pos, rmax, tprint, Ntor, Npol
 
@@ -105,6 +111,14 @@ def init_files(fname, CME):
 	# assume space craft is at some initial lon0 and determine motion in that inertial frame
 	else:
 		print CME.t, CME.points[CC.idcent][1,0], CME.points[CC.idcent][1,1], CME.points[CC.idcent][1,2] - lon0
+	# find lowest lat point
+	minlat = 9999.
+	maxlat = -9999.
+	for point in CME.points:
+		if point[1,1] < minlat:
+			minlat = point[1,1]
+		if point[1,1] > maxlat:
+			maxlat = point[1,1]
 
 	# same as above but for writing to file instead of printing to screen
 	# include more values too
@@ -114,10 +128,10 @@ def init_files(fname, CME):
 			 CME.shape[0], CME.shape[1], CME.shape[2], CME.vels[0,0]/1.e5, CME.vels[0,1]/1.e5, CME.vels[0,2]/1.e5,
 			 CME.vels[1,0]/1.e5, CME.vels[1,1]/1.e5, CME.vels[1,2]/1.e5, CME.vels[2,0]/1.e5, CME.vels[2,1]/1.e5, CME.vels[2,2]/1.e5, CME.tilt, CME.ang_width*radeg))
 	else:
-		f1.write('%10.2f %15f %15f %15f %15f %15f %15f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f \n' % 
+		f1.write('%10.2f %15f %15f %15f %15f %15f %15f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f\n' % 
 			(CME.t, CME.points[CC.idcent][1,0], CME.points[CC.idcent][1,1], CME.points[CC.idcent][1,2] - lon0, 
 			 CME.shape[0], CME.shape[1], CME.shape[2], CME.vels[0,0]/1.e5, CME.vels[0,1]/1.e5, CME.vels[0,2]/1.e5,
-			 CME.vels[1,0]/1.e5, CME.vels[1,1]/1.e5, CME.vels[1,2]/1.e5, CME.vels[2,0]/1.e5, CME.vels[2,1]/1.e5, CME.vels[2,2]/1.e5, CME.tilt, CME.ang_width*radeg))
+			 CME.vels[1,0]/1.e5, CME.vels[1,1]/1.e5, CME.vels[1,2]/1.e5, CME.vels[2,0]/1.e5, CME.vels[2,1]/1.e5, CME.vels[2,2]/1.e5, CME.tilt, CME.ang_width*radeg, minlat,maxlat))
 
 
 def print_status(CME):
@@ -135,6 +149,16 @@ def print_status(CME):
 	v2 = np.sqrt(np.sum(vdef**2)) # vdef
 	v3 = np.sqrt(np.sum(vdrag**2)) # vdrag
 	calc_width = np.arctan((CME.shape[1] + CME.shape[2]) / (CME.points[CC.idcent][1,0] - CME.shape[0] - CME.shape[1])) * radeg
+
+	# find lowest lat point
+	minlat = 9999.
+	maxlat = -9999.
+	for point in CME.points:
+		if point[1,1] < minlat:
+			minlat = point[1,1]
+		if point[1,1] > maxlat:
+			maxlat = point[1,1]
+
 	# co-rotating frame
 	if lon0 < -400:
 		print CME.t, CME.points[CC.idcent][1,0], CME.points[CC.idcent][1,1], CME.points[CC.idcent][1,2], CME.tilt, CME.ang_width * radeg
@@ -145,12 +169,12 @@ def print_status(CME):
 
 	# inertial frame
 	else:
-		print CME.t, CME.points[CC.idcent][1,0], CME.points[CC.idcent][1,1], (CME.points[CC.idcent][1,2] - lon0 + rotrate * 60 * radeg * CME.t) %360., CME.tilt, CME.ang_width * radeg, CME.M
+		print CME.t, CME.points[CC.idcent][1,0], CME.points[CC.idcent][1,1], (CME.points[CC.idcent][1,2] - lon0 + rotrate * 60 * radeg * CME.t) %360., CME.tilt, CME.ang_width * radeg, CME.M, minlat, maxlat, CME.shape_ratios[1]
 		#print CME.t, CME.points[CC.idcent][1,0], CME.points[CC.idcent][1,1], (CME.points[CC.idcent][1,2] - lon0 + rotrate * 60 * radeg * CME.t) %360. , v1/1e5, v2/1e5,v3/1e5, CME.shape[0], CME.shape[1], CME.shape[2], CME.tilt
-		f1.write('%10.2f %15f %15f %15f %15f %15f %15f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f \n' % 
+		f1.write('%10.2f %15f %15f %15f %15f %15f %15f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f\n' % 
 		(CME.t, CME.points[CC.idcent][1,0], CME.points[CC.idcent][1,1], (CME.points[CC.idcent][1,2] -lon0 + rotrate * 60 * radeg * CME.t) % 360., 
 		 CME.shape[0], CME.shape[1], CME.shape[2], CME.vels[0,0]/1.e5, CME.vels[0,1]/1.e5, CME.vels[0,2]/1.e5,
-		 vdef[0]/1.e5, vdef[1]/1.e5, vdef[2]/1.e5, vdrag[0]/1.e5, vdrag[1]/1.e5, vdrag[2]/1.e5, CME.tilt, CME.ang_width*radeg))
+		 vdef[0]/1.e5, vdef[1]/1.e5, vdef[2]/1.e5, vdrag[0]/1.e5, vdrag[1]/1.e5, vdrag[2]/1.e5, CME.tilt, CME.ang_width*radeg, minlat, maxlat))
 
 def close_files():
 	f1.close()

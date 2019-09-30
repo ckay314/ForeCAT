@@ -1,7 +1,7 @@
 import numpy as np
 import math
 import ForeCAT_functions as FC
-import CPU_functions as GF
+import ForceFields as FF
 
 global dtor, radeg
 dtor  = 0.0174532925   # degrees to radians
@@ -66,10 +66,13 @@ class CME:
 		self.points = [[]]*Npoints
 		for i in range(Npoints):			# points.[i][0,:] = xyz
 			self.points[i] = np.zeros([2, 3])	# points.[i][1,:] = SPH (R, lat, lon)
-		# convenient for serial version to have r/lat/lon in arrays
+		# convenient for serial version to have r/lat/lon/x/y/z in arrays
 		self.rs = np.zeros(Npoints)
 		self.lats = np.zeros(Npoints)
 		self.lons = np.zeros(Npoints)
+		self.xs = np.zeros(Npoints)
+		self.ys = np.zeros(Npoints)
+		self.zs = np.zeros(Npoints)
 		# position of the center of the CME cone (center of toroidal axis) 
 		self.cone = np.zeros([2,3])
 		self.cone[1,:] = [params[2] - self.shape[0] - self.shape[1], pos[0], pos[1]]
@@ -86,6 +89,8 @@ class CME:
 		for i in range(Npoints):
 			# 0 = tension, 1 = grad B
 			self.defforces[i] = np.zeros([2,3]) 
+		self.Fpgrad = np.zeros([Npoints,3])
+		self.Ftens = np.zeros([Npoints,3])
 		# Single drag force for full CME
 		self.Fdrag = np.zeros(3)
 
@@ -124,6 +129,7 @@ class CME:
 
 
 
+
 	# Programs typically called only within this class
 
 	def calc_rho(self):
@@ -144,9 +150,10 @@ class CME:
 		# points numbering  (top)  0  3  6  9   12   (bot)
 		#  toroidal --->	   1  4  7  10  13    --> 7 is nose
 		#	axis		   2  5  8  11  14
-		# choice between CPU and GPU!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-		GF.calc_pos(self)  # done on GPU now
-		#GF.calc_posCPU(self)
+		if FC.useGPU:
+			FF.calc_pos(self)  # done on GPU now
+		else:
+			FF.calc_posCPU(self)
 		# Update the unit vector giving radial direction
  		colat = (90. - self.cone[1,1]) * dtor
 		lon   = self.cone[1,2] * dtor
@@ -182,9 +189,7 @@ class CME:
 		self.acc[1,:] = self.Fdrag / self.rho # drag force
 		# include rotation if desired
 		if FC.rotCME == 1: self.calc_torque()
-		#print self.defforces[idcent][0,:]
-		# removed previous check that Fdotr was not inf which could happen near poles
-
+		
 
 	def calc_torque(self):
 		# Use the deflection forces to calculate the average torque about the CME nose
@@ -205,8 +210,11 @@ class CME:
 		# more complicated general version
 		else:
 			Irot = 0.25 * self.rho * bb**2 *cc * math.pi**2 * (2. * (1+2.*ee**2)*np.power(ome2, .5) * cc**2 + 3. * bb**2 * (np.sqrt(ome2) - ome2**2) / ee**2 + bb**2 * ome2) 
-		tottor = GF.calc_torque()
-
+		# switch between GPU and CPU
+		if FC.useGPU:
+			tottor = FF.calc_torque()
+		else:
+			tottor = FF.calc_torqueCPU(self)
 		# Determine average torque and adjust angular momentum + rotational velocity accordingly
 		avgtor = tottor  / Npoints 
 		cmevol = self.M / self.rho # easy way to get volume
@@ -228,9 +236,10 @@ class CME:
 		# Calculate the drag acting on the CME
 		self.Fdrag = FC.calc_drag(self)
 		# Calculate the deflection forces on the CME  
-		# GPU or CPU options!!!!
-		GF.calc_forces(self)
-		#GF.calc_forcesCPU(self)
+		if FC.useGPU:
+			FF.calc_forces(self)
+		else:
+			FF.calc_forcesCPU(self)
 		
 		# convert forces to accelerations
 		self.get_center_acc()
