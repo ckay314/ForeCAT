@@ -8,78 +8,177 @@ import pickle
 import CME_class as CC
 
 
-global rsun, dtor, radeg, kmRs, rotrate
-
-#MAKE SURE THESE MATCH THE STAR
-rsun  =  7e10		 # set at solar for now but will be
-rotrate = 2.8e-6         # updated to correct values later
+global dtor, radeg
 
 dtor  = 0.0174532925  # degrees to radians
 radeg = 57.29577951    # radians to degrees
-kmRs  = 1.0e5 / rsun # km (/s) divided by rsun (in cm)
+global picklejar 
+picklejar = '/Users/ckay/PickleJar/'
 
 def set_star_params(rsun_in, rotrate_in):
-	rsun = rsun_in
-	rotrate = rotrate_in
+    rsun = rsun_in
+    rotrate = rotrate_in
 
-def read_in_params(file):
+def readinputfile():
+    # Get the CME number
+    global fprefix
+    if len(sys.argv) < 2: 
+        #sys.exit("Need an input file")
+        print('No input file given!')
+        sys.exit()
+    else:
+        input_file = sys.argv[1]
+        inputs = np.genfromtxt(input_file, dtype=str)
+        fprefix = input_file[:-4]
+        input_values = get_inputs(inputs)
+    return input_values
 
-	#read in the parameters from a text file
-	a = np.genfromtxt(file, dtype=None)
-	ins = []
-	myvar_names = []
-	myvar_vals  = []
-	needed_vars = ['ilat', 'ilon', 'tilt', 'CR', 'Cd', 'rstart', 'shapeA', 'shapeB', 'tprint', 'rmax', 'rotCME', 'Ntor', 'Npol', 'L0', 'useGPU']
-	ordered_var_vals = np.zeros(len(needed_vars))
-	for i in range(len(a)):
-		temp = a[i]
-		myvar_names.append(temp[0][:-1])
-		myvar_vals.append(temp[1])
-		ins.append(temp[1])
+def get_inputs(inputs):
+    possible_vars = ['ilat', 'ilon', 'tilt', 'CR', 'Cd', 'rstart', 'shapeA', 'shapeB', 'tprint', 'rmax', 'rotCME', 'Ntor', 'Npol', 'L0', 'useGPU', 'raccel1', 'raccel2', 'vrmin', 'vrmax', 'AWmin', 'AWmax', 'AWr', 'maxM', 'rmaxM', 'rsun', 'rotrate', 'Rss']
+    # if matches add to dictionary
+    input_values = {}
+    for i in range(len(inputs)):
+        temp = inputs[i]
+        if temp[0][:-1] in possible_vars:
+            input_values[temp[0][:-1]] = temp[1]
+        else:
+            print temp[0][:-1], ' not a valid input '
+    return input_values
 
-	# check for each of the needed variables by name
-	any_missing = False
-	idx_counter = 0
-	for a_var in needed_vars:
-		if a_var in myvar_names:
-			in_idx = myvar_names.index(a_var)
-			ordered_var_vals[idx_counter] = myvar_vals[in_idx]
-			print a_var,  myvar_vals[in_idx]
-		else:
-			any_missing = True
-			print "Add ", a_var+': into input file' 
-		idx_counter += 1
-
-	# set variables to the read in values 
-	global vmax, tprint, CR, Cd, rotCME, lon0
-	ilat    = ordered_var_vals[0]      # [deg]
-	ilon    = ordered_var_vals[1]      # [deg]
-	tilt    = ordered_var_vals[2]	   # [deg]
-	init_pos   = [ilat, ilon, tilt]
-
-	CR		  = int(ordered_var_vals[3])
-	Cd		  = ordered_var_vals[4]
-
-	# CME_params = [A, B, rstart]
-	CME_params = np.array([ordered_var_vals[6], ordered_var_vals[7], ordered_var_vals[5]], dtype=float)
-
-	tprint  = ordered_var_vals[8]      # [mins]
-	rmax    = ordered_var_vals[9]      # [Rstar]
-	rotCME 	  = ordered_var_vals[10]
-	Ntor = int(ordered_var_vals[11])
-	Npol = int(ordered_var_vals[12])
-	lon0 = ordered_var_vals[13]
-	global useGPU
-	if ordered_var_vals[14] == 1:
-		useGPU = True
-	else:
-		useGPU = False
-        
-	global picklejar 
-	picklejar = '/Users/ckay/PickleJar/'
+def getInps(input_values):
+    global rsun, rotrate, kmRs, Rss
+    # assume solar defaults
+    rsun = 7e10
+    rotrate = 2.8e-6
+    Rss = 2.5
+    if 'rsun' in input_values:  rsun = float(input_values['rsun'])
+    if 'rotrate' in input_values:  rotrate = float(input_values['rotrate'])
+    if 'Rss' in input_values:  Rss = float(input_values['Rss'])
+    kmRs  = 1.0e5 / rsun 
     
-	return CME_params, init_pos, rmax, tprint, Ntor, Npol
-
+    
+    # pull parameters for initial position
+    try:
+        ilat = float(input_values['ilat'])
+        ilon = float(input_values['ilon'])
+        tilt = float(input_values['tilt'])
+    except:
+        print('Missing at least one of ilat, ilon, tilt.  Cannot run without :(')
+        sys.exit()
+    init_pos = [ilat, ilon, tilt]
+    
+    # pull Carrington Rotation (or other ID for magnetogram)
+    global CR
+    try: 
+        CR = int(input_values['CR'])
+    except:
+        print('Missing Carrington Rotation number (or other magnetogram ID).  Cannot run without :(')
+        sys.exit()
+        
+    # check for drag coefficient
+    global Cd
+    try: 
+        Cd = float(input_values['Cd'])
+    except:
+        print('Assuming Cd = 1')
+        Cd = 1.
+    
+    # check for CME shape and initial nose distance
+    try: 
+        rstart = float(input_values['rstart'])
+    except:
+        print('Assuming CME nose starts at 1.1')
+        rstart = 1.1
+    try: 
+        shapeA = float(input_values['shapeA'])
+    except:
+        print('Assuming A = 1')
+        shapeA = 1.
+    try: 
+        shapeB = float(input_values['shapeB'])
+    except:
+        print('Assuming B = 0.15')
+        shapeB = 0.15
+    CME_params = [shapeA, shapeB, rstart]
+    
+    # get distance where we stop the simulation
+    try: 
+        rmax = float(input_values['rmax'])
+    except:
+        print('Assuming simulation stops at 10 Rs')
+        rmax = 10.
+    
+    # determine frequency to print to screen
+    tprint = 1. # default value
+    if 'tprint' in input_values: tprint = float(input_values['tprint'])
+        
+    # determine if including rotation
+    global rotCME
+    try: 
+        rotCME = float(input_values['rotCME'])
+    except:
+        print('Assuming rotation is included')
+        rotCME = 1
+        
+    # determine torus grid resolution
+    Ntor = 15
+    Npol = 13
+    if 'Ntor' in input_values:  Ntor = int(input_values['Ntor'])
+    if 'Npol' in input_values:  Npol = int(input_values['Npol'])
+    
+    # determine L0 parameter
+    global lon0
+    lon0 = 0.
+    if 'L0' in input_values:  lon0 = float(input_values['L0'])
+    
+    # determine if using GPU
+    global useGPU
+    useGPU = False
+    if 'useGPU' in input_values: 
+        if input_values['useGPU'] == 'True': 
+            useGPU == True
+            
+    # get radial propagation model params
+    global rga, rap, vmin, vmax, a_prop
+    rga = 1.3
+    rap = 4.0
+    vmin = 70. * 1e5
+    if 'raccel1' in input_values:  rga = float(input_values['raccel1'])
+    if 'raccel2' in input_values:  rap = float(input_values['raccel2'])
+    if 'vrmin' in input_values:  vmin = float(input_values['vrmin']) * 1e5
+    try:
+        vmax = float(input_values['vrmax']) *1e5
+    except:
+        print('Need final CME speed vrmax')
+        sys.exit()
+    a_prop = (vmax**2 - vmin **2) / 2. / (rap - rga) # [ cm/s ^2 / rsun]
+    
+    # get expansion model params
+    aw0 = 8.
+    awR = 1.5
+    if 'AWmin' in input_values:  aw0 = float(input_values['AWmin'])
+    if 'AWr' in input_values:  awR = float(input_values['AWr'])
+    try:
+        awM = float(input_values['AWmax']) - aw0
+    except:
+        print('Need final CME angular width AWmax')  
+        sys.exit()          
+    global user_exp 
+    user_exp = lambda R_nose: aw0 + awM*(1. - np.exp(-(R_nose-1.)/awR))
+    
+    # mass
+    rmaxM = 10.
+    if 'rmaxM' in input_values: rmaxM = float(input_values['rmaxM']) 
+    try:
+        max_M = float(input_values['maxM']) * 1e15
+    except:
+        print('Assuming 1e15 g CME')            
+        max_M = 1e15
+    global user_mass
+    user_mass = lambda R_nose: np.min([max_M / 2. * (1 + (R_nose-CME_params[2])/(rmaxM - CME_params[2])), max_M])
+            
+    return CME_params, init_pos, rmax, tprint, Ntor, Npol
+    
 
 def initdefpickle(CR):
 	# moved from pickle B since now use GPU_funcs for mag field stuff instead
@@ -97,14 +196,13 @@ def initdefpickle(CR):
 	dists = np.array(dists)
 
 
-def init_files(fname, CME):
-
+def init_files(CME):
 	global f1, fname2
-	fname2 = fname #useless but lets me print to screen so I can monitor progress
+	fname2 = fprefix #useless but lets me print to screen so I can monitor progress
 		       #while running a bash script of ForeCATs
 
 	# Initialize the files where the output values are stored
-	f1 = open(fname + ".dat", "w")
+	f1 = open(fprefix + ".dat", "w")
 	#CME.init_CMEplot()
 	#if makemovie == 1: CME.take_selfie()
 
@@ -135,6 +233,13 @@ def init_files(fname, CME):
 			(CME.t, CME.points[CC.idcent][1,0], CME.points[CC.idcent][1,1], CME.points[CC.idcent][1,2] - lon0, 
 			 CME.shape[0], CME.shape[1], CME.shape[2], CME.vels[0,0]/1.e5, CME.vels[0,1]/1.e5, CME.vels[0,2]/1.e5,
 			 CME.vels[1,0]/1.e5, CME.vels[1,1]/1.e5, CME.vels[1,2]/1.e5, CME.vels[2,0]/1.e5, CME.vels[2,1]/1.e5, CME.vels[2,2]/1.e5, CME.tilt, CME.ang_width*radeg, minlat,maxlat))
+
+
+def user_vr(R_nose, rhat):
+    if R_nose  <= rga: vtemp = vmin
+    elif R_nose > rap: vtemp = vmax
+    else: vtemp = np.sqrt(vmin**2 + 2. * a_prop * (R_nose - rga))
+    return vtemp, vtemp*rhat
 
 
 def print_status(CME):

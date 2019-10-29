@@ -1,0 +1,9 @@
+rmax: 		2.0
+ilat:		16.5
+ilon:		216.8
+tilt:    	-35.
+CR:			2029
+shapeB:		0.2
+vrmax:		514
+AWmax:		28
+maxM: 		3
