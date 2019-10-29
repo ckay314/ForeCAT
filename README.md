@@ -6,4 +6,4 @@ Main file ForeCAT.py calls the other three files.
   
 To minimize the effects of accidental tinkering, for most purposes ForeCAT.py is the only one that needs to be edited - the CME mass, velocity, and angular width profiles can all be changed here.  For consistency the same set of other CME_class/GPU_functions/ForeCAT_functions can be used for all runs and individual ForeCAT.py modified for each case.  
   
-ForeCAT.py pulls in initial conditions from a .txt file in the format shown here
+ForeCAT.py pulls in initial conditions from a .txt file in the format shown here.  It needs the background magnetic field files to run (not hosted here) and a revised manual is in the works.
