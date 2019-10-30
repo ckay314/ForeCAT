@@ -4,7 +4,7 @@ import pickle
 import CME_class as CC
 import ForeCAT_functions as FC
 
-def init_GPU(CR, Ntor, Npol, rsun_in, RSS_in):
+def init_GPU(CR, Ntor, Npol):
 	global cuda
 	import pycuda.driver as cuda
 	import pycuda.autoinit
@@ -373,8 +373,8 @@ def init_GPU(CR, Ntor, Npol, rsun_in, RSS_in):
 		""")
 
 	global rsun, dtor, radeg, kmRs, RSS, dR
-	rsun  = rsun_in	
-	RSS   = RSS_in 
+	rsun  = FC.rsun
+	RSS   = FC.Rss 
 
 	dtor  = 0.0174532925   # degrees to radians
 	radeg = 57.29577951    # radians to degrees
@@ -495,10 +495,10 @@ def init_GPU(CR, Ntor, Npol, rsun_in, RSS_in):
 	global GPU_calctorque
 	GPU_calctorque = mod.get_function("calc_torque_GPU")
 
-def init_CPU(CR, Ntor, Npol, rsun_in, RSS_in):
+def init_CPU(CR, Ntor, Npol):
 	global rsun, dtor, radeg, kmRs, RSS, dR, RsR
-	rsun  = rsun_in	
-	RSS   = RSS_in 
+	rsun  = FC.rsun
+	RSS   = FC.Rss
 	RsR = rsun/7e10 # star radius in solar radii
 
 	dtor  = 0.0174532925   # degrees to radians

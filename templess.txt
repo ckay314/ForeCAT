@@ -4,6 +4,7 @@ ilon:		216.8
 tilt:    	-35.
 CR:			2029
 shapeB:		0.2
+shapeB0:	0.05
 vrmax:		514
 AWmax:		28
 maxM: 		3

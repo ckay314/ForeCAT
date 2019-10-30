@@ -17,7 +17,7 @@ def cart2cart(x_in, lat, lon, tilt):
 class CME:
 	"Represent a CME using a grid representing the flux rope shape"
 
-	def __init__(self, pos, params, Ntor_in, Npol_in, user_vr, user_exp, user_mass, rsun_in):
+	def __init__(self, pos, params, Ntor_in, Npol_in, user_vr, user_exp, user_mass, user_Bexp, rsun_in):
 		# Initialize parameters using numbers fed in from other parts of ForeCAT
 		# pos should contain [lat, lon, tilt]
 		# params should contain [A, B, R_front]
@@ -45,8 +45,8 @@ class CME:
 
 
 		# Set up the CME shape parameters
-		self.ang_width = user_exp(params[2]) # initial angular width
-		self.shape_ratios = [params[0], params[1]] # set shape ratios
+		self.ang_width = user_exp(params[2])  * dtor # initial angular width
+		self.shape_ratios = [params[0], user_Bexp(params[2])] # set shape ratios
 		# determine initial width
 		c = params[2] * np.tan(self.ang_width*dtor)/ (1 + params[1] + np.tan(self.ang_width * dtor) * (params[1] + params[0]))
 		# assign full shape using shape ratios and width
@@ -188,7 +188,7 @@ class CME:
 		self.acc[0,:] = ftot / self.rho / Npoints # avg def force
 		self.acc[1,:] = self.Fdrag / self.rho # drag force
 		# include rotation if desired
-		if FC.rotCME == 1: self.calc_torque()
+		if FC.rotCME: self.calc_torque()
 		
 
 	def calc_torque(self):
@@ -230,7 +230,7 @@ class CME:
 
 
 	# Called externally by programs using CME class, update the CME a time step
-	def update_CME(self, user_vr, user_exp, user_mass):
+	def update_CME(self, user_vr, user_exp, user_mass, user_Bexp):
 	# Determines the forces and updates the CME accordingly.
 
 		# Calculate the drag acting on the CME
@@ -287,6 +287,9 @@ class CME:
 		
 		# Update the angular width using user_exp from ForeCAT.py
 		self.ang_width = user_exp(self.points[idcent][1,0]) * dtor
+        
+		# Update the cross section shape using user_Bexp
+		self.shape_ratios[1] = user_Bexp(self.points[idcent][1,0])
 
 		# Determine the new shape from the new angular width
 		self.shape[2] = self.points[idcent][1,0] * np.tan(self.ang_width) / (1 + self.shape_ratios[1] 

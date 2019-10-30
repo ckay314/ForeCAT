@@ -15,10 +15,6 @@ radeg = 57.29577951    # radians to degrees
 global picklejar 
 picklejar = '/Users/ckay/PickleJar/'
 
-def set_star_params(rsun_in, rotrate_in):
-    rsun = rsun_in
-    rotrate = rotrate_in
-
 def readinputfile():
     # Get the CME number
     global fprefix
@@ -34,7 +30,7 @@ def readinputfile():
     return input_values
 
 def get_inputs(inputs):
-    possible_vars = ['ilat', 'ilon', 'tilt', 'CR', 'Cd', 'rstart', 'shapeA', 'shapeB', 'tprint', 'rmax', 'rotCME', 'Ntor', 'Npol', 'L0', 'useGPU', 'raccel1', 'raccel2', 'vrmin', 'vrmax', 'AWmin', 'AWmax', 'AWr', 'maxM', 'rmaxM', 'rsun', 'rotrate', 'Rss']
+    possible_vars = ['ilat', 'ilon', 'tilt', 'CR', 'Cd', 'rstart', 'shapeA', 'shapeB', 'tprint', 'rmax', 'rotCME', 'Ntor', 'Npol', 'L0', 'useGPU', 'raccel1', 'raccel2', 'vrmin', 'vrmax', 'AWmin', 'AWmax', 'AWr', 'maxM', 'rmaxM', 'rsun', 'rotrate', 'Rss', 'saveData', 'printData', 'shapeB0']
     # if matches add to dictionary
     input_values = {}
     for i in range(len(inputs)):
@@ -61,10 +57,15 @@ def getInps(input_values):
     try:
         ilat = float(input_values['ilat'])
         ilon = float(input_values['ilon'])
-        tilt = float(input_values['tilt'])
+        origtilt = float(input_values['tilt'])
     except:
         print('Missing at least one of ilat, ilon, tilt.  Cannot run without :(')
         sys.exit()
+    # code written orig for tilt clockwise from north but take input
+    # as counterclockwise from west to match observations now
+    origtilt = (origtilt +3600)%360. # force to be positive
+    tilt = 90 - origtilt 
+    
     init_pos = [ilat, ilon, tilt]
     
     # pull Carrington Rotation (or other ID for magnetogram)
@@ -114,11 +115,10 @@ def getInps(input_values):
         
     # determine if including rotation
     global rotCME
-    try: 
-        rotCME = float(input_values['rotCME'])
-    except:
-        print('Assuming rotation is included')
-        rotCME = 1
+    rotCME = True
+    if 'rotCME' in input_values: 
+        if input_values['rotCME'] == 'False': 
+            rotCME = False
         
     # determine torus grid resolution
     Ntor = 15
@@ -136,7 +136,7 @@ def getInps(input_values):
     useGPU = False
     if 'useGPU' in input_values: 
         if input_values['useGPU'] == 'True': 
-            useGPU == True
+            useGPU = True
             
     # get radial propagation model params
     global rga, rap, vmin, vmax, a_prop
@@ -166,6 +166,12 @@ def getInps(input_values):
     global user_exp 
     user_exp = lambda R_nose: aw0 + awM*(1. - np.exp(-(R_nose-1.)/awR))
     
+    # check if given a B0, if so let shape B evolve at same rate as full AW
+    shapeB0 = shapeB # set default to no change in shape if not specified
+    if 'shapeB0' in input_values:  shapeB0 = float(input_values['shapeB0'])
+    global user_Bexp
+    user_Bexp = lambda R_nose: shapeB0 + (shapeB-shapeB0)*(1. - np.exp(-(R_nose-1.)/awR))
+    
     # mass
     rmaxM = 10.
     if 'rmaxM' in input_values: rmaxM = float(input_values['rmaxM']) 
@@ -176,6 +182,18 @@ def getInps(input_values):
         max_M = 1e15
     global user_mass
     user_mass = lambda R_nose: np.min([max_M / 2. * (1 + (R_nose-CME_params[2])/(rmaxM - CME_params[2])), max_M])
+    
+    global saveData
+    saveData = False
+    if 'saveData' in input_values: 
+        if input_values['saveData'] == 'True': 
+            saveData = True
+    
+    global printData
+    printData = True
+    if 'printData' in input_values: 
+        if input_values['printData'] == 'False': 
+            saveData = False
             
     return CME_params, init_pos, rmax, tprint, Ntor, Npol
     
@@ -196,45 +214,6 @@ def initdefpickle(CR):
 	dists = np.array(dists)
 
 
-def init_files(CME):
-	global f1, fname2
-	fname2 = fprefix #useless but lets me print to screen so I can monitor progress
-		       #while running a bash script of ForeCATs
-
-	# Initialize the files where the output values are stored
-	f1 = open(fprefix + ".dat", "w")
-	#CME.init_CMEplot()
-	#if makemovie == 1: CME.take_selfie()
-
-	# if set lon0 < 400 then doing simulation in Carrington lon (CME will slip with respect to CR lon due to rotation)
-	if lon0 < -400:
-		print CME.t, CME.points[CC.idcent][1,0], CME.points[CC.idcent][1,1], CME.points[CC.idcent][1,2]
-	# assume space craft is at some initial lon0 and determine motion in that inertial frame
-	else:
-		print CME.t, CME.points[CC.idcent][1,0], CME.points[CC.idcent][1,1], CME.points[CC.idcent][1,2] - lon0
-	# find lowest lat point
-	minlat = 9999.
-	maxlat = -9999.
-	for point in CME.points:
-		if point[1,1] < minlat:
-			minlat = point[1,1]
-		if point[1,1] > maxlat:
-			maxlat = point[1,1]
-
-	# same as above but for writing to file instead of printing to screen
-	# include more values too
-	if lon0 < -400:
-		f1.write('%10.2f %15f %15f %15f %15f %15f %15f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f \n' % 
-			(CME.t, CME.points[CC.idcent][1,0], CME.points[CC.idcent][1,1], CME.points[CC.idcent][1,2], 
-			 CME.shape[0], CME.shape[1], CME.shape[2], CME.vels[0,0]/1.e5, CME.vels[0,1]/1.e5, CME.vels[0,2]/1.e5,
-			 CME.vels[1,0]/1.e5, CME.vels[1,1]/1.e5, CME.vels[1,2]/1.e5, CME.vels[2,0]/1.e5, CME.vels[2,1]/1.e5, CME.vels[2,2]/1.e5, CME.tilt, CME.ang_width*radeg))
-	else:
-		f1.write('%10.2f %15f %15f %15f %15f %15f %15f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f\n' % 
-			(CME.t, CME.points[CC.idcent][1,0], CME.points[CC.idcent][1,1], CME.points[CC.idcent][1,2] - lon0, 
-			 CME.shape[0], CME.shape[1], CME.shape[2], CME.vels[0,0]/1.e5, CME.vels[0,1]/1.e5, CME.vels[0,2]/1.e5,
-			 CME.vels[1,0]/1.e5, CME.vels[1,1]/1.e5, CME.vels[1,2]/1.e5, CME.vels[2,0]/1.e5, CME.vels[2,1]/1.e5, CME.vels[2,2]/1.e5, CME.tilt, CME.ang_width*radeg, minlat,maxlat))
-
-
 def user_vr(R_nose, rhat):
     if R_nose  <= rga: vtemp = vmin
     elif R_nose > rap: vtemp = vmax
@@ -242,50 +221,27 @@ def user_vr(R_nose, rhat):
     return vtemp, vtemp*rhat
 
 
-def print_status(CME):
-	# This is mostly the same as the printing in the init files, it just doesn't init files
-	# print to screen vector mags, not individual components
-	v1 = np.sqrt(np.sum(CME.vels[0,:]**2)) # vr
-	vdefLL = CME.vdefLL
-	vdragLL = CME.vdragLL
-	colat = (90. - CME.cone[1,1]) * dtor
-	lon = CME.cone[1,2] * dtor
-	colathat = np.array([np.cos(lon) * np.cos(colat), np.sin(lon) * np.cos(colat), -np.sin(colat)]) 
-	lonhat = np.array([-np.sin(lon), np.cos(lon), 0.])
-	vdef = vdefLL[0] * colathat + vdefLL[1] * lonhat
-	vdrag = vdragLL[0] * colathat + vdragLL[1] * lonhat
-	v2 = np.sqrt(np.sum(vdef**2)) # vdef
-	v3 = np.sqrt(np.sum(vdrag**2)) # vdrag
-	calc_width = np.arctan((CME.shape[1] + CME.shape[2]) / (CME.points[CC.idcent][1,0] - CME.shape[0] - CME.shape[1])) * radeg
-
-	# find lowest lat point
-	minlat = 9999.
-	maxlat = -9999.
-	for point in CME.points:
-		if point[1,1] < minlat:
-			minlat = point[1,1]
-		if point[1,1] > maxlat:
-			maxlat = point[1,1]
-
-	# co-rotating frame
-	if lon0 < -400:
-		print CME.t, CME.points[CC.idcent][1,0], CME.points[CC.idcent][1,1], CME.points[CC.idcent][1,2], CME.tilt, CME.ang_width * radeg
-		f1.write('%10.2f %15f %15f %15f %15f %15f %15f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f \n' % 
-		(CME.t, CME.points[CC.idcent][1,0], CME.points[CC.idcent][1,1], CME.points[CC.idcent][1,2], 
-		 CME.shape[0], CME.shape[1], CME.shape[2], CME.vels[0,0]/1.e5, CME.vels[0,1]/1.e5, CME.vels[0,2]/1.e5,
-		 vdef[0]/1.e5, vdef[1]/1.e5, vdef[2]/1.e5, vdrag[0]/1.e5, vdrag[1]/1.e5, vdrag[2]/1.e5, CME.tilt, CME.ang_width*radeg))
-
-	# inertial frame
-	else:
-		print CME.t, CME.points[CC.idcent][1,0], CME.points[CC.idcent][1,1], (CME.points[CC.idcent][1,2] - lon0 + rotrate * 60 * radeg * CME.t) %360., CME.tilt, CME.ang_width * radeg, CME.M, minlat, maxlat, CME.shape_ratios[1]
-		#print CME.t, CME.points[CC.idcent][1,0], CME.points[CC.idcent][1,1], (CME.points[CC.idcent][1,2] - lon0 + rotrate * 60 * radeg * CME.t) %360. , v1/1e5, v2/1e5,v3/1e5, CME.shape[0], CME.shape[1], CME.shape[2], CME.tilt
-		f1.write('%10.2f %15f %15f %15f %15f %15f %15f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f %10.2f\n' % 
-		(CME.t, CME.points[CC.idcent][1,0], CME.points[CC.idcent][1,1], (CME.points[CC.idcent][1,2] -lon0 + rotrate * 60 * radeg * CME.t) % 360., 
-		 CME.shape[0], CME.shape[1], CME.shape[2], CME.vels[0,0]/1.e5, CME.vels[0,1]/1.e5, CME.vels[0,2]/1.e5,
-		 vdef[0]/1.e5, vdef[1]/1.e5, vdef[2]/1.e5, vdrag[0]/1.e5, vdrag[1]/1.e5, vdrag[2]/1.e5, CME.tilt, CME.ang_width*radeg, minlat, maxlat))
-
-def close_files():
-	f1.close()
+def openfile(CME):
+    global outfile
+    outfile = open(fprefix + ".dat", "w")
+    printstep(CME)
+    
+def printstep(CME):
+    thislon = CME.points[CC.idcent][1,2]
+    if lon0 > -998:
+        thislon -= lon0
+    # convert tilt from clockwise from N to counter from W
+    tilt = (90-CME.tilt+3600.) % 360. # in between 0 and 360
+    if tilt > 180: tilt -=360.
+    vCME = np.sqrt(np.sum(CME.vels[0,:]**2))/1e5
+    vdef = np.sqrt(np.sum((CME.vdefLL+CME.vdragLL)**2))/1e5
+    # outdata is [t, lat, lon, tilt, vCME, vDef, AW, A, B]
+    outdata = [CME.t, CME.points[CC.idcent][1,0], CME.points[CC.idcent][1,1], thislon, tilt, vCME, vdef, CME.ang_width*radeg, CME.shape_ratios[0], CME.shape_ratios[1]]
+    outprint = ''
+    for i in outdata:
+        outprint = outprint +'{:7.3f}'.format(i) + ' '  
+    if printData: print outprint  
+    if saveData: outfile.write(outprint+'\n')
 
 def calc_drag(CME):
 #only calculate nonradial drag (ignore CME propagation)
